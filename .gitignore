@@ -1,0 +1,21 @@
+# secrets
+.env
+
+# environments
+venv/
+
+# vector DB
+chroma_db/
+
+# large ML artifacts
+*.safetensors
+*.whl
+*.bin
+*.sqlite3
+
+# python
+__pycache__/
+*.pyc
+
+# editor
+.vscode/

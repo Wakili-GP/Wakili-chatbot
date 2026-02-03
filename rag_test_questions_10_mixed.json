@@ -1,0 +1,172 @@
+{
+  "schema_version": "1.0",
+  "dataset_version": "2026-02-03-mixed10",
+  "created_at": "2026-02-03T19:15:30.097990+00:00",
+  "description": "Benchmark set for Egyptian legal RAG assistant: constitutional Qs + multi-law retrieval + procedural gating. (Mixed 10-case smoke test across 5 categories)",
+  "laws_in_scope": [
+    {
+      "key": "constitution",
+      "path": "/mnt/data/Egyptian_Constitution_legalnature_only.json"
+    },
+    {
+      "key": "criminal_procedure",
+      "path": "/mnt/data/قانون_الإجراءات_الجنائية.json"
+    },
+    {
+      "key": "tech_crimes",
+      "path": "/mnt/data/Technology Crimes Law.json"
+    },
+    {
+      "key": "labor",
+      "path": "/mnt/data/Egyptian_Labour_Law.json"
+    },
+    {
+      "key": "personal_status",
+      "path": "/mnt/data/Egyptian_Personal Status Laws.json"
+    },
+    {
+      "key": "civil",
+      "path": "/mnt/data/Egyptian_Civil.json"
+    }
+  ],
+  "defaults": {
+    "k": 15,
+    "rerank_top_n": 5,
+    "recall_k": 5,
+    "pass_rule": "pass if recall@k>=1 for questions with expected articles; else pass if answer startswith expected_answer_prefix (if provided)."
+  },
+  "cases": [
+    {
+      "id": "Q001",
+      "category": "constitutional",
+      "question": "ما مضمون المادة 1 من الدستور المصري؟",
+      "expected": {
+        "law": "constitution",
+        "expected_article_numbers": [
+          "1"
+        ],
+        "must_cite_articles": true,
+        "answer_should_not_add_external_info": true
+      },
+      "notes": "جمهورية مصر العربية دولة ذات سيادة، موحدة لا تقبل التجزئة، نظامها جمهوري ديمقراطي يقوم على المواطنة وسيادة القانون. الشعب المصري جزء من الأمة العربية والعالم الإسلامي والقارة الأفريقية."
+    },
+    {
+      "id": "Q002",
+      "category": "constitutional",
+      "question": "ما مضمون المادة 2 من الدستور المصري؟",
+      "expected": {
+        "law": "constitution",
+        "expected_article_numbers": [
+          "2"
+        ],
+        "must_cite_articles": true,
+        "answer_should_not_add_external_info": true
+      },
+      "notes": "الإسلام دين الدولة، واللغة العربية لغتها الرسمية، ومبادئ الشريعة الإسلامية هي المصدر الرئيسي للتشريع."
+    },
+    {
+      "id": "Q041",
+      "category": "criminal_procedure",
+      "question": "وفقاً لقانون الإجراءات الجنائية، ماذا تقرر المادة 1؟",
+      "expected": {
+        "law": "criminal_procedure",
+        "expected_article_numbers": [
+          "1"
+        ],
+        "must_cite_articles": true
+      },
+      "notes": "النيابة العامة هي الجهة الوحيدة المختصة برفع الدعوى الجنائية ومباشرتها، ولا يجوز تركها أو وقفها إلا وفقاً للقانون."
+    },
+    {
+      "id": "Q042",
+      "category": "criminal_procedure",
+      "question": "وفقاً لقانون الإجراءات الجنائية، ماذا تقرر المادة 2؟",
+      "expected": {
+        "law": "criminal_procedure",
+        "expected_article_numbers": [
+          "2"
+        ],
+        "must_cite_articles": true
+      },
+      "notes": "النائب العام أو أعضاء النيابة العامة يباشرون الدعوى الجنائية، ويجوز تعيين آخرين لأداء هذه الوظيفة وفقاً للقانون."
+    },
+    {
+      "id": "Q066",
+      "category": "tech_crimes",
+      "question": "ما الذي تنظمه المادة 1 في قانون مكافحة جرائم تقنية المعلومات؟",
+      "expected": {
+        "law": "tech_crimes",
+        "expected_article_numbers": [
+          "1"
+        ],
+        "must_cite_articles": true
+      },
+      "notes": "تحدد المادة التعريفات الأساسية في القانون مثل الجهاز والوزير المختص والبيانات الإلكترونية والبيانات الشخصية والحكومية، والمعالجة الإلكترونية وتقنية المعلومات، ومقدم الخدمة والمستخدم، والبرنامج والنظام"
+    },
+    {
+      "id": "Q067",
+      "category": "tech_crimes",
+      "question": "ما الذي تنظمه المادة 2 في قانون مكافحة جرائم تقنية المعلومات؟",
+      "expected": {
+        "law": "tech_crimes",
+        "expected_article_numbers": [
+          "2"
+        ],
+        "must_cite_articles": true
+      },
+      "notes": "تُلزم المادة مقدمي الخدمة بحفظ سجلات وبيانات محددة لمدة 180 يومًا، والحفاظ على سريتها وتأمينها وعدم إفشائها إلا بأمر قضائي. كما تُلزمهم بتوفير بيانات تعريفية وترخيصية للمستخدمين والجهات المختصة، وتمكي"
+    },
+    {
+      "id": "Q076",
+      "category": "labor",
+      "question": "ما مضمون المادة 1 في قانون العمل المصري (قانون العمل)؟",
+      "expected": {
+        "law": "labor",
+        "expected_article_numbers": [
+          "1"
+        ],
+        "must_cite_articles": true
+      },
+      "notes": "تعريفات شاملة لـ 38 مصطلحاً أساسياً في قانون العمل تشمل: تعريف العامل وصاحب العمل والمتدرج، تفصيل شامل لمكونات الأجر (الأساسي والمتغير بما في ذلك العمولة والعلاوات والمنح والمكافآت والبدلات ونصيب الأر"
+    },
+    {
+      "id": "Q077",
+      "category": "labor",
+      "question": "ما مضمون المادة 2 في قانون العمل المصري (قانون العمل)؟",
+      "expected": {
+        "law": "labor",
+        "expected_article_numbers": [
+          "2"
+        ],
+        "must_cite_articles": true
+      },
+      "notes": "تحديد السنة بـ365 يوماً والشهر بـ30 يوماً لأغراض تطبيق القانون، ما لم يتفق الطرفان على خلاف ذلك."
+    },
+    {
+      "id": "Q091",
+      "category": "personal_status",
+      "question": "في القانون رقم 25 لسنة 1920، ماذا تقرر المادة 1؟",
+      "expected": {
+        "law": "personal_status",
+        "expected_article_numbers": [
+          "1"
+        ],
+        "must_cite_articles": true
+      },
+      "notes": "تجب النفقة للزوجة من تاريخ العقد الصحيح وتشمل الغذاء والكسوة والمسكن والعلاج. لا تجب النفقة إذا ارتدت أو امتنعت عن تسليم نفسها أو خرجت بدون إذن. نفقة الزوجة دين على الزوج ولها امتياز على أمواله."
+    },
+    {
+      "id": "Q092",
+      "category": "personal_status",
+      "question": "في القانون رقم 25 لسنة 1920، ماذا تقرر المادة 2؟",
+      "expected": {
+        "law": "personal_status",
+        "expected_article_numbers": [
+          "2"
+        ],
+        "must_cite_articles": true
+      },
+      "notes": "نفقة المطلقة التي تستحقها تعتبر ديناً من تاريخ الطلاق."
+    }
+  ]
+}
