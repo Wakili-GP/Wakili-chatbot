@@ -53,9 +53,10 @@ RERANKER_DIR = os.path.join(BASE_DIR, "reranker")
 
 _qa_chain = None
 
-# Two retrievers (general vs constitution-only routing)
+# Two retrievers One general retriever + many per-law retrievers
 _retriever_general: Optional[BaseRetriever] = None
-_retriever_constitution: Optional[BaseRetriever] = None
+_retrievers_by_law: Dict[str, BaseRetriever] = {}
+
 
 # Composite key map to avoid article_number collisions across laws
 _article_map_all: Optional[Dict[str, dict]] = None
@@ -611,7 +612,7 @@ def _build_retriever(
 # Main initializer
 # ----------------------------
 def initialize_rag_pipeline():
-    global _retriever_general, _retriever_constitution, _article_map_all
+    global _retriever_general, _retrievers_by_law, _article_map_all
 
     if not os.path.exists(DATA_DIR):
         raise FileNotFoundError(f"Data folder not found: {DATA_DIR}")
@@ -621,9 +622,6 @@ def initialize_rag_pipeline():
 
     docs_all, article_map_all = _build_documents(data)
     _article_map_all = article_map_all
-
-    docs_const = [d for d in docs_all if d.metadata.get("law_key") == CANON_CONSTITUTION]
-    logger.info("Constitution docs=%d (law_key=%s)", len(docs_const), CANON_CONSTITUTION)
 
     embeddings = HuggingFaceEmbeddings(model_name="Omartificial-Intelligence-Space/GATE-AraBert-v1")
 
@@ -635,15 +633,28 @@ def initialize_rag_pipeline():
         logger.info("Building Chroma DB (first time) into: %s", CHROMA_DIR)
         vectorstore = Chroma.from_documents(docs_all, embeddings, persist_directory=CHROMA_DIR)
 
-    # semantic retrievers: general + constitution filter
+    # General semantic retriever
     semantic_general = vectorstore.as_retriever(search_kwargs={"k": 15})
 
-    # Chroma metadata filtering works only if you rebuild chroma_db after this rag.py change.
-    semantic_const = vectorstore.as_retriever(search_kwargs={"k": 15, "filter": {"law_key": CANON_CONSTITUTION}})
-
+    # ✅ Build general retriever over ALL docs
     _retriever_general = _build_retriever(docs_all, article_map_all, semantic_general)
-    _retriever_constitution = _build_retriever(docs_const, article_map_all, semantic_const)
 
+    # ✅ Build a retriever for EACH law_key automatically
+    _retrievers_by_law = {}
+    law_keys = sorted({(d.metadata.get("law_key") or "").strip() for d in docs_all if (d.metadata.get("law_key") or "").strip()})
+    logger.info("Detected law_keys=%s", law_keys)
+
+    for lk in law_keys:
+        docs_subset = [d for d in docs_all if d.metadata.get("law_key") == lk]
+        if not docs_subset:
+            continue
+
+        # Use Chroma metadata filter to keep semantic search inside this law only
+        semantic_law = vectorstore.as_retriever(search_kwargs={"k": 15, "filter": {"law_key": lk}})
+        _retrievers_by_law[lk] = _build_retriever(docs_subset, article_map_all, semantic_law)
+        logger.info("Built retriever for law_key=%s docs=%d", lk, len(docs_subset))
+
+    # --- LLM setup (same as your existing code) ---
     groq_key = os.getenv("GROQ_API_KEY")
     if not groq_key:
         raise ValueError("GROQ_API_KEY is missing. Add it to .env")
@@ -654,7 +665,6 @@ def initialize_rag_pipeline():
         temperature=0.3,
         model_kwargs={"top_p": 0.9},
     )
-
     system_instructions = """
 <role>
 أنت "المساعد القانوني الذكي"، خبير متخصص في الدستور المصري والقوانين الإجرائية.
@@ -698,9 +708,9 @@ def initialize_rag_pipeline():
     ])
 
     qa_chain = (prompt | llm | StrOutputParser())
-
     logger.info("RAG pipeline initialized successfully.")
     return qa_chain
+
 
 
 # ----------------------------
@@ -715,9 +725,17 @@ def get_chain():
 
 def _get_retriever_for_question(question: str) -> BaseRetriever:
     get_chain()  # ensure initialized
-    if _is_constitutional_question(question):
-        return _retriever_constitution or _retriever_general  # fallback
-    return _retriever_general
+
+    preferred = _preferred_law_keys(question)
+    if preferred:
+        # If multiple laws are returned, choose the first that exists
+        for lk in preferred:
+            r = _retrievers_by_law.get(lk)
+            if r is not None:
+                return r
+
+    return _retriever_general  # fallback
+
 
 
 def _docs_to_sources(docs: List[Document]) -> List[Dict[str, Any]]:
@@ -791,11 +809,13 @@ def ask(question: str) -> Tuple[str, List[Dict[str, Any]]]:
     context_text = _docs_to_context(docs)
 
     # Hard guard: constitutional questions must be answered from constitution docs only.
-    if _is_constitutional_question(question):
-        has_const = any((d.metadata.get("law_key") == CANON_CONSTITUTION) for d in docs)
-        if not has_const:
-            msg = "عذراً، لم يرد ذكر لهذا الموضوع في المواد الدستورية التي تم استرجاعها في السياق الحالي."
+    preferred = _preferred_law_keys(question)
+    if preferred:
+        has_pref = any((d.metadata.get("law_key") in preferred) for d in docs)
+        if not has_pref:
+            msg = "عذراً، لم يرد ذكر لهذا الموضوع في المواد المسترجعة من القانون الأكثر صلة بالسؤال ضمن السياق الحالي."
             return msg, _docs_to_sources(docs)
+
 
     answer = chain.invoke({"context": context_text, "input": question})
 
