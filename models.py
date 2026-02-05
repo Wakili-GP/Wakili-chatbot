@@ -1,11 +1,12 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
 
 class AskRequest(BaseModel):
     question: str
 
-
 class SourceItem(BaseModel):
+    law_key: Optional[str] = None
+    law_name: Optional[str] = None
     article_number: Optional[str] = None
     legal_nature: Optional[str] = None
     keywords: Optional[str] = None
@@ -23,4 +24,4 @@ class ArticleItem(BaseModel):
 class AskResponse(BaseModel):
     answer: Optional[str] = None
     articles: Optional[List[ArticleItem]] = None
-    sources: List[SourceItem] = []
+    sources: List[SourceItem] = Field(default_factory=list)
