@@ -1,0 +1,51 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual Environment
+venv/
+env/
+ENV/
+
+# Environment variables
+.env
+.env.local
+
+# Reranker model files
+reranker/
+
+# Vector database
+chroma_db/
+
+# Data files - CSV
+*.csv
+
+# Data files - JSON (exclude all except specific test file)
+*.json
+!test_dataset_5_questions.json
+
+# Markdown files (exclude all except README)
+*.md
+!README.md
+
+# Wheel files
+*.whl
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Jupyter Notebooks checkpoints
+.ipynb_checkpoints/

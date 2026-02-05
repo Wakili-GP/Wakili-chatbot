@@ -1,0 +1,57 @@
+# ===========================================
+# Constitutional Legal Assistant - Requirements
+# ===========================================
+
+# Core Python
+python-dotenv>=1.0.0
+
+# Streamlit UI
+streamlit>=1.28.0
+
+# LangChain Core
+langchain>=0.2.0
+langchain-core>=0.2.0
+langchain-text-splitters>=0.2.0
+langchain-community>=0.2.0
+langchain-classic>=0.0.1
+
+# Vector Store
+langchain-chroma>=0.1.0
+chromadb>=0.4.0
+
+# Embeddings & Reranker
+langchain-huggingface>=0.0.3
+sentence-transformers>=2.2.0
+transformers>=4.35.0
+torch>=2.0.0
+
+# LLM Provider (Groq)
+langchain-groq>=0.1.0
+
+# BM25 Keyword Search
+rank-bm25>=0.2.2
+
+# Numerical
+numpy>=1.24.0
+
+# ===========================================
+# EVALUATION (RAGAS)
+# ===========================================
+ragas>=0.1.0
+datasets>=2.14.0
+
+# ===========================================
+# PHOENIX OBSERVABILITY (Optional)
+# ===========================================
+# For app_final_pheonix.py tracing
+opentelemetry-api>=1.20.0
+opentelemetry-sdk>=1.20.0
+opentelemetry-exporter-otlp-proto-http>=1.20.0
+arize-phoenix>=4.0.0
+
+# ===========================================
+# LOCAL WHEEL PACKAGES (Install Separately)
+# ===========================================
+# Install these manually with:
+# pip install openinference_instrumentation_langchain-0.1.56-py3-none-any.whl
+# pip install openinference_instrumentation_openai-0.1.41-py3-none-any.whl
