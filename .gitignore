@@ -1,21 +1,51 @@
-# secrets
-.env
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
 
-# environments
+# Virtual Environment
 venv/
+env/
+ENV/
 
-# vector DB
+# Environment variables
+.env
+.env.local
+
+# Reranker model files
+reranker/
+
+# Vector database
 chroma_db/
 
-# large ML artifacts
-*.safetensors
+# Data files - CSV
+*.csv
+
+# Data files - JSON (exclude all except specific test file)
+*.json
+!test_dataset_5_questions.json
+
+# Markdown files (exclude all except README)
+*.md
+!README.md
+
+# Wheel files
 *.whl
-*.bin
-*.sqlite3
 
-# python
-__pycache__/
-*.pyc
-
-# editor
+# IDE
 .vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Jupyter Notebooks checkpoints
+.ipynb_checkpoints/

@@ -8,19 +8,28 @@ An intelligent RAG-based chatbot for answering questions about the Egyptian Cons
 
 ```
 Chatbot_me/
-├── app_final.py                 # Main Streamlit app (production)
+├── app_final.py                 # Main Streamlit app (v1 - basic)
 ├── app_final_pheonix.py         # Streamlit app with Phoenix tracing
-├── evaluate_rag.py              # RAG evaluation with RAGAS metrics
+├── app_final_updated.py         # Latest production version with improvements
+├── evaluate_rag.py              # RAG evaluation with RAGAS metrics (simplified output)
 ├── evaluate.py                  # Full standalone evaluation script
 ├── requirements.txt             # Python dependencies
-├── .env                         # Environment variables (create this)
-├── Egyptian_Constitution_legalnature_only.json  # Constitution data
-├── chroma_db/                   # Vector database (auto-generated)
-├── reranker/                    # Arabic reranker model files
+├── .env                         # Environment variables (create this - NOT in repo)
+├── .gitignore                   # Git ignore rules
+├── test_dataset_5_questions.json # Test dataset (5 questions from different categories)
+├── data/                        # Legal documents (NOT in repo)
+│   ├── Egyptian_Constitution_legalnature_only.json
+│   ├── Egyptian_Civil.json
+│   ├── Egyptian_Labour_Law.json
+│   ├── Egyptian_Personal Status Laws.json
+│   ├── Technology Crimes Law.json
+│   └── قانون_الإجراءات_الجنائية.json
+├── chroma_db/                   # Vector database (auto-generated - NOT in repo)
+├── reranker/                    # Arabic reranker model files (NOT in repo)
 │   ├── model.safetensors
 │   ├── config.json
 │   └── ...
-└── *.whl                        # Local wheel packages for Phoenix
+└── *.whl                        # Local wheel packages for Phoenix (NOT in repo)
 ```
 
 ---
@@ -72,9 +81,27 @@ PHOENIX_SERVICE_NAME=constitutional-assistant
 
 ## 🏃 Running the Applications
 
-### 1. Run Main App (`app_final.py`)
+### 1. Run Latest Production App (`app_final_updated.py`) ⭐ RECOMMENDED
 
-The standard chatbot without tracing:
+The most recent version with improved prompt engineering and decision tree logic:
+
+```powershell
+streamlit run app_final_updated.py
+```
+
+Then open: **http://localhost:8501**
+
+**Features:**
+- Enhanced Arabic RTL support
+- Improved decision tree for handling different question types
+- Better handling of procedural vs. constitutional questions
+- Cleaner response formatting
+
+---
+
+### 2. Run Basic App (`app_final.py`)
+
+The original version:
 
 ```powershell
 streamlit run app_final.py
@@ -84,7 +111,7 @@ Then open: **http://localhost:8501**
 
 ---
 
-### 2. Run App with Phoenix Tracing (`app_final_pheonix.py`)
+### 3. Run App with Phoenix Tracing (`app_final_pheonix.py`)
 
 This version includes observability/tracing with Phoenix.
 
@@ -109,7 +136,52 @@ Then open:
 
 ---
 
-### 3. Run Evaluation (`evaluate.py`)
+### 4. Run Evaluation (`evaluate_rag.py`) ⭐ NEW SIMPLIFIED FORMAT
+
+Evaluate the RAG system with simplified output showing only essential information:
+
+```powershell
+# Uses default test dataset (test_dataset_5_questions.json)
+python evaluate_rag.py
+
+# With custom test file
+python evaluate_rag.py path/to/your_test.json
+
+# Set via environment variable
+set QA_FILE_PATH=test_dataset_5_questions.json
+python evaluate_rag.py
+```
+
+**Output Files:**
+- `evaluation_breakdown.json` - **Simplified format** with:
+  - Question
+  - Ground truth
+  - Actual answer
+  - Score (average of all metrics per question)
+  - Average score across all questions
+- `evaluation_results.json` - Detailed metrics breakdown
+- `evaluation_detailed.json` - Full raw evaluation data
+
+**Sample Output Format:**
+```json
+{
+  "questions": [
+    {
+      "question": "ما الطبيعة القانونية لحق العمل في الدستور المصري؟",
+      "ground_truth": "حق أساسي/حرية: العمل حق وواجب...",
+      "actual_answer": "حسب المادة (12) من الدستور المصري...",
+      "score": 0.8542
+    }
+  ],
+  "average_score": 0.8542
+}
+```
+
+**⚠️ Note:** This script has a **60-second delay** between questions to avoid Groq API rate limits.
+
+---
+
+### 5. Run Full Evaluation (`evaluate.py`)
 
 More comprehensive evaluation with external test dataset and rate limiting:
 
@@ -128,7 +200,24 @@ python evaluate.py test_dataset_small.json my_results.json
 
 ---
 
+## 📊 Test Dataset
+
+The project includes a curated test dataset with 5 questions covering different legal categories:
+
+**`test_dataset_5_questions.json`** includes:
+1. **الدستور (Constitution)** - Constitutional rights and principles
+2. **قانون العمل (Labour Law)** - Workplace rights and regulations
+3. **الإجراءات الجنائية (Criminal Procedures)** - Criminal law procedures
+4. **جرائم تقنية المعلومات (Technology Crimes)** - Cybercrime laws
+5. **الأحوال الشخصية (Personal Status Laws)** - Family law matters
+
+This diverse dataset ensures comprehensive testing across all major legal domains covered by the system.
+
+---
+
 ## 📊 Understanding RAGAS Metrics
+
+The evaluation system uses RAGAS metrics to assess the quality of the RAG pipeline. The simplified output combines these into a single score per question:
 
 | Metric | Description | Good Score |
 |--------|-------------|------------|
@@ -137,9 +226,40 @@ python evaluate.py test_dataset_small.json my_results.json
 | **context_precision** | How much context was useful? | > 0.6 |
 | **context_recall** | Did we retrieve all needed info? | > 0.7 |
 
+**Question Score** = Average of all four metrics (0-1 scale)
+
+**Overall Score** = Average of all question scores
+
 ---
 
-## 🔧 Troubleshooting
+## � Repository Structure & Git
+
+### Files NOT Included in Repository (via `.gitignore`)
+
+The following files are excluded from version control for security, size, or privacy reasons:
+
+1. **`reranker/`** - Large model files (download separately or train locally)
+2. **`__pycache__/`** - Python compiled bytecode
+3. **`chroma_db/`** - Vector database (auto-generated on first run)
+4. **`.env`** - Environment variables with API keys (NEVER commit this!)
+5. **`*.json`** - All JSON files EXCEPT `test_dataset_5_questions.json`
+6. **`*.csv`** - CSV data files
+7. **`*.md`** - All markdown files EXCEPT `README.md`
+8. **`*.whl`** - Wheel package files
+
+### First-Time Setup
+
+When cloning this repository, you'll need to:
+
+1. **Create `.env` file** with your API keys
+2. **Download/prepare data files** in the `data/` folder
+3. **Download reranker model** to `reranker/` folder
+4. **Install dependencies** from `requirements.txt`
+5. **Run the app** - ChromaDB will auto-generate on first run
+
+---
+
+## �🔧 Troubleshooting
 
 ### "GROQ_API_KEY not found"
 Make sure your `.env` file exists and contains:
@@ -191,6 +311,15 @@ pip install -r requirements.txt --force-reinstall
 User Question (Arabic)
         ↓
 ┌─────────────────────────────────┐
+│  Decision Tree Logic            │
+│  (app_final_updated.py)         │
+│  ├── Constitutional questions   │
+│  ├── Procedural questions       │
+│  ├── General legal advice       │
+│  └── Out-of-scope filtering     │
+└─────────────────────────────────┘
+        ↓
+┌─────────────────────────────────┐
 │  Hybrid Retrieval (RRF)         │
 │  ├── Semantic Search (50%)      │
 │  ├── BM25 Keyword (30%)         │
@@ -210,10 +339,32 @@ User Question (Arabic)
 ┌─────────────────────────────────┐
 │  LLM (Llama 3.1 via Groq)       │
 │  (Generate Arabic answer)       │
+│  - Separate system/user prompts │
+│  - Citation with article numbers│
+│  - Temperature: 0.3              │
 └─────────────────────────────────┘
         ↓
     Final Answer
 ```
+
+---
+
+## 📋 Version History
+
+### Latest Updates (Feb 2026)
+- ✅ Added `app_final_updated.py` with improved decision tree logic
+- ✅ Simplified evaluation output (question, ground_truth, answer, score)
+- ✅ Created curated 5-question test dataset covering 5 legal categories
+- ✅ Added comprehensive `.gitignore` for repository management
+- ✅ Updated documentation with all recent changes
+- ✅ Improved Arabic RTL support and number formatting
+
+### Previous Features
+- Multi-source legal document support (Constitution, Civil, Labour, etc.)
+- Hybrid retrieval with RRF (Reciprocal Rank Fusion)
+- Arabic-specific reranker integration
+- Phoenix tracing for observability
+- RAGAS-based evaluation system
 
 ---
 
