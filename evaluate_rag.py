@@ -46,8 +46,8 @@ from langchain_groq import ChatGroq
 from langchain_huggingface import HuggingFaceEmbeddings
 import logging
 
-# Import the RAG pipeline initialization
-from app_final_updated import initialize_rag_pipeline
+# Import the RAG pipeline initialization from the main RAG module
+from rag import initialize_rag_pipeline, ask
 
 # Suppress verbose API logging
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -200,21 +200,18 @@ def run_evaluation():
         print(f"{'-'*60}")
         
         try:
-            # Invoke the chain
-            result = qa_chain.invoke(question)
-            
-            answer = result["answer"]
-            context_docs = result["context"]
-            
-            # Extract context text from documents
-            contexts = [doc.page_content for doc in context_docs]
-            
+            # Use rag.ask which returns (answer, sources)
+            answer, sources = ask(question)
+
+            # sources is a list of dicts produced by rag._docs_to_sources
+            contexts = [s.get("content", "") for s in sources]
+
             # Store results
             results["question"].append(question)
             results["answer"].append(answer)
             results["contexts"].append(contexts)
             results["ground_truth"].append(ground_truth)
-            
+
             print(f"✅ Generated answer ({len(answer)} chars)")
             print(f"✅ Retrieved {len(contexts)} context documents")
 
