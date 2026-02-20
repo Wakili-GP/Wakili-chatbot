@@ -86,10 +86,14 @@ def _load_json_folder(folder_path: str) -> List[dict]:
     return all_items
 
 
-def build_qa_chain(settings: Settings):
+def build_qa_chain(settings: Settings, conversation_history: List[dict] = None):
     """
     Builds and returns:
       qa_chain: Runnable that returns {"context": [Document...], "input": str, "answer": str}
+    
+    Args:
+        settings: Configuration settings
+        conversation_history: Optional list of previous messages for context
     """
     if not os.path.exists(settings.data_dir):
         raise FileNotFoundError(f"Data folder not found: {settings.data_dir}")
@@ -345,6 +349,8 @@ def build_qa_chain(settings: Settings):
 
 مهمتك الأساسية: الإجابة بدقة استناداً إلى "السياق التشريعي" المرفق أدناه.
 عند وجود نص قانوني في السياق، هو مصدرك الأول والأهم.
+
+استخدم سجل المحادثة السابقة (إن وجد) لفهم السياق والإجابة بتسلسل منطقي.
 </role>
 
 <decision_logic>
@@ -407,10 +413,19 @@ def build_qa_chain(settings: Settings):
 </formatting_rules>
 """
 
+    # Build conversation history text for context
+    history_text = ""
+    if conversation_history:
+        history_text = "السجل السابق للمحادثة:\n"
+        for msg in conversation_history[-6:]:  # Keep last 6 messages
+            role_label = "المستخدم" if msg.get("role") == "user" else "المستشار"
+            history_text += f"{role_label}: {msg.get('content', '')}\n"
+        history_text += "\n---\n\n"
+
     prompt = ChatPromptTemplate.from_messages(
         [
             ("system", system_instructions),
-            ("system", "السياق التشريعي المتاح (المصدر الأساسي):\n{context}"),
+            ("system", f"{history_text}السياق التشريعي المتاح (المصدر الأساسي):\n{{context}}"),
             ("human", "سؤال المستفيد:\n{input}"),
         ]
     )
