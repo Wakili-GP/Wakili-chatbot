@@ -314,10 +314,17 @@ def build_qa_chain(settings: Settings, conversation_history: List[dict] = None):
     if not settings.reranker_model_path:
         raise RuntimeError("RERANKER_MODEL_PATH is not set in .env (must point to your local reranker folder or a HuggingFace model ID).")
     
-    # Check if it's a local path and if it exists. Allow HuggingFace model IDs (e.g., "BAAI/bge-reranker-v2-m3")
-    if os.path.sep in settings.reranker_model_path or settings.reranker_model_path.startswith("."):
-        if not os.path.exists(settings.reranker_model_path):
-            raise FileNotFoundError(f"Reranker path not found: {settings.reranker_model_path}")
+    # Check if it's a local path. Allow HuggingFace model IDs (e.g., "BAAI/bge-reranker-v2-m3")
+    # Local paths typically start with /, ., ~, or contain directory indicators
+    is_local_path = (
+        settings.reranker_model_path.startswith("/") or
+        settings.reranker_model_path.startswith(".") or
+        settings.reranker_model_path.startswith("~") or
+        (len(settings.reranker_model_path.split("/")) > 2)  # Multiple "/" suggests directories
+    )
+    
+    if is_local_path and not os.path.exists(settings.reranker_model_path):
+        raise FileNotFoundError(f"Reranker path not found: {settings.reranker_model_path}")
 
     cross_encoder = HuggingFaceCrossEncoder(model_name=settings.reranker_model_path)
     compressor = CrossEncoderReranker(model=cross_encoder, top_n=5)
