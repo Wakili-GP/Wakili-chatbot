@@ -8,17 +8,20 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# Compute base directory
+_BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 
 @dataclass(frozen=True)
 class Settings:
-    base_dir: str = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    data_dir: str = os.path.join(base_dir, "data")
-    chroma_dir: str = os.path.join(base_dir, "chroma_db")
+    base_dir: str = _BASE_DIR
+    data_dir: str = os.path.join(_BASE_DIR, "data")
+    chroma_dir: str = os.path.join(_BASE_DIR, "chroma_db")
 
     groq_api_key: str = os.getenv("GROQ_API_KEY", "")
     groq_model_name: str = os.getenv("GROQ_MODEL_NAME", "llama-3.3-70b-versatile")
 
-    reranker_model_path: str = os.getenv("RERANKER_MODEL_PATH", "")
+    reranker_model_path: str = os.getenv("RERANKER_MODEL_PATH", os.path.join(_BASE_DIR, "reranker"))
 
     semantic_k: int = int(os.getenv("SEMANTIC_K", "10"))
     bm25_k: int = int(os.getenv("BM25_K", "10"))
