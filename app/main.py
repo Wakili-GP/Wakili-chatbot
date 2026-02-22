@@ -3,23 +3,27 @@
 # ============================================
 from __future__ import annotations
 
+import os
 from typing import List
 
 import anyio
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
+from .config import settings
 from .deps import get_chain, reload_chain
-from .schemas import AskRequest, AskResponse, SourceDoc
+from .history import add_to_history, clear_history, get_history
+from .schemas import AskRequest, AskResponse, ClearHistoryResponse, HistoryResponse, SourceDoc
 from .utils import convert_to_eastern_arabic
 
 app = FastAPI(title="Legal RAG API", version="1.0.0")
 
 # Optional: allow frontend calls
+allow_any_origin = "*" in settings.cors_allowed_origins
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # tighten later
-    allow_credentials=True,
+    allow_origins=settings.cors_allowed_origins,
+    allow_credentials=not allow_any_origin,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -27,8 +31,14 @@ app.add_middleware(
 
 @app.on_event("startup")
 def _startup():
-    # preload once
-    get_chain()
+    preload = os.getenv("PRELOAD_CHAIN_ON_STARTUP", "true").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    if preload:
+        get_chain()
 
 
 @app.get("/health")
@@ -40,6 +50,18 @@ def health():
 def reload():
     reload_chain()
     return {"status": "reloaded"}
+
+
+@app.get("/history", response_model=HistoryResponse)
+def history(user_id: str, session_id: str = "default"):
+    messages = get_history(user_id=user_id, session_id=session_id)
+    return HistoryResponse(user_id=user_id, session_id=session_id, history=messages)
+
+
+@app.post("/clear-history", response_model=ClearHistoryResponse)
+def clear(user_id: str, session_id: str = "default"):
+    clear_history(user_id=user_id, session_id=session_id)
+    return ClearHistoryResponse(user_id=user_id, session_id=session_id, cleared=True)
 
 
 def _dedupe_sources(docs) -> List[SourceDoc]:
@@ -71,6 +93,7 @@ def _dedupe_sources(docs) -> List[SourceDoc]:
 @app.post("/ask", response_model=AskResponse)
 async def ask(payload: AskRequest):
     chain = get_chain()
+    active_session_id = payload.session_id or "default"
 
     try:
         # LangChain invoke is sync; run in worker thread
@@ -90,7 +113,21 @@ async def ask(payload: AskRequest):
                 if s.article_number:
                     s.article_number = convert_to_eastern_arabic(s.article_number)
 
-    return AskResponse(answer=answer, sources=sources, raw=result)
+    # Build serializable raw dict (omit Document objects)
+    safe_raw = {k: v for k, v in result.items() if k not in ("context",)}
+    add_to_history(
+        user_id=payload.user_id,
+        session_id=active_session_id,
+        user_msg=payload.query,
+        assistant_msg=answer,
+    )
+    return AskResponse(
+        answer=answer,
+        user_id=payload.user_id,
+        session_id=active_session_id,
+        sources=sources,
+        raw=safe_raw,
+    )
 
 
 

@@ -13,6 +13,17 @@ ENV/
 # Environment variables
 .env
 .env.local
+.env.*
+!.env.example
+
+# Secrets / credentials
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+secrets.*
+credentials.*
 
 # Reranker model files
 reranker/
@@ -46,6 +57,17 @@ Thumbs.db
 
 # Logs
 *.log
+logs/
+
+# Local databases / runtime state
+*.sqlite
+*.sqlite3
+*.db
+
+# Python tooling cache
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
 # Jupyter Notebooks checkpoints
 .ipynb_checkpoints/

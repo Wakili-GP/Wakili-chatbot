@@ -368,6 +368,31 @@ User Question (Arabic)
 
 ---
 
+## ☁️ Upload to GitHub (Branch: `ahmed`)
+
+Use these commands from the project root:
+
+```powershell
+# Create/switch to your branch
+git checkout -B ahmed
+
+# Review what will be committed
+git status
+
+# Stage all safe files (filtered by .gitignore)
+git add .
+
+# Commit
+git commit -m "Project update: secure gitignore + README"
+
+# Push branch to GitHub
+git push -u origin ahmed
+```
+
+Before pushing, verify that `.env`, local DB files, and private keys are not listed by `git status`.
+
+---
+
 ## 📞 Support
 
 For issues, check:

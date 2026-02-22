@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import re
+import threading
 import warnings
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
@@ -35,6 +36,13 @@ warnings.filterwarnings("ignore")
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
+
+# Global caches for heavy resources
+_embeddings_cache = None
+_vectorstore_cache = None
+_cross_encoder_cache = None
+_docs_cache = None
+_cache_lock = threading.RLock()
 
 
 def _load_json_folder(folder_path: str) -> List[dict]:
@@ -138,28 +146,48 @@ def build_qa_chain(settings: Settings):
     if not docs:
         raise RuntimeError("No valid documents found in data folder (missing required fields).")
 
-    embeddings = HuggingFaceEmbeddings(model_name="Omartificial-Intelligence-Space/GATE-AraBert-v1")
+    # Cache heavy resources globally
+    global _embeddings_cache, _vectorstore_cache, _cross_encoder_cache, _docs_cache
+    
+    with _cache_lock:
+        # Load embeddings (cached)
+        if _embeddings_cache is None:
+            logger.info("Loading embeddings model (first time)...")
+            _embeddings_cache = HuggingFaceEmbeddings(model_name="Omartificial-Intelligence-Space/GATE-AraBert-v1")
+        embeddings = _embeddings_cache
+        
+        # Cache docs for reuse
+        if _docs_cache is None or len(_docs_cache) != len(docs):
+            _docs_cache = docs
+        docs = _docs_cache
 
-    # vector store reuse
-    db_exists = os.path.exists(settings.chroma_dir) and os.listdir(settings.chroma_dir)
-    if db_exists:
-        vectorstore = Chroma(
-            persist_directory=settings.chroma_dir,
-            embedding_function=embeddings,
-        )
-        stored_count = vectorstore._collection.count()
-        if stored_count == 0 or abs(stored_count - len(docs)) > 5:
-            import shutil
+    # vector store reuse (with global cache)
+    with _cache_lock:
+        if _vectorstore_cache is not None:
+            vectorstore = _vectorstore_cache
+        else:
+            db_exists = os.path.exists(settings.chroma_dir) and os.listdir(settings.chroma_dir)
+            if db_exists:
+                vectorstore = Chroma(
+                    persist_directory=settings.chroma_dir,
+                    embedding_function=embeddings,
+                )
+                stored_count = vectorstore._collection.count()
+                if stored_count == 0 or abs(stored_count - len(docs)) > 5:
+                    import shutil
 
-            shutil.rmtree(settings.chroma_dir, ignore_errors=True)
-            db_exists = False
+                    shutil.rmtree(settings.chroma_dir, ignore_errors=True)
+                    db_exists = False
 
-    if not db_exists:
-        vectorstore = Chroma.from_documents(
-            docs,
-            embeddings,
-            persist_directory=settings.chroma_dir,
-        )
+            if not db_exists:
+                logger.info("Creating vectorstore (first time)...")
+                vectorstore = Chroma.from_documents(
+                    docs,
+                    embeddings,
+                    persist_directory=settings.chroma_dir,
+                )
+            
+            _vectorstore_cache = vectorstore
 
     base_retriever = vectorstore.as_retriever(search_kwargs={"k": settings.semantic_k})
 
@@ -305,15 +333,33 @@ def build_qa_chain(settings: Settings):
     )
 
     # -----------------------------
-    # Reranker (CrossEncoder)
+    # Reranker (CrossEncoder) - cached
     # -----------------------------
-    if not settings.reranker_model_path:
-        raise RuntimeError("RERANKER_MODEL_PATH is not set in .env (must point to your local reranker folder).")
-    if not os.path.exists(settings.reranker_model_path):
-        raise FileNotFoundError(f"Reranker path not found: {settings.reranker_model_path}")
+    # Determine reranker model: use local path if it contains model weights,
+    # otherwise fall back to HuggingFace model ID (weights pre-cached at build time).
+    _RERANKER_HF_ID = "BAAI/bge-reranker-v2-m3"
+    reranker_path = settings.reranker_model_path
 
-    cross_encoder = HuggingFaceCrossEncoder(model_name=settings.reranker_model_path)
-    compressor = CrossEncoderReranker(model=cross_encoder, top_n=5)
+    if reranker_path and os.path.exists(reranker_path):
+        # Check if local dir actually has model weights (not just tokenizer files)
+        has_weights = any(
+            f.endswith((".bin", ".safetensors", ".pt"))
+            for f in os.listdir(reranker_path)
+        )
+        if not has_weights:
+            logger.info("Local reranker dir has no weights; using HF cached model: %s", _RERANKER_HF_ID)
+            reranker_path = _RERANKER_HF_ID
+    else:
+        logger.info("No local reranker dir; using HF cached model: %s", _RERANKER_HF_ID)
+        reranker_path = _RERANKER_HF_ID
+
+    with _cache_lock:
+        if _cross_encoder_cache is None:
+            logger.info("Loading cross encoder reranker (first time)...")
+            _cross_encoder_cache = HuggingFaceCrossEncoder(model_name=reranker_path)
+        cross_encoder = _cross_encoder_cache
+    
+    compressor = CrossEncoderReranker(model=cross_encoder, top_n=settings.reranker_top_n)
     compression_retriever = ContextualCompressionRetriever(
         base_compressor=compressor,
         base_retriever=hybrid_retriever,
