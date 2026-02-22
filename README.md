@@ -368,13 +368,13 @@ User Question (Arabic)
 
 ---
 
-## ☁️ Upload to GitHub (Branch: `ahmed`)
+## ☁️ Upload to GitHub (Branch: `ahmed-abdelsalam`)
 
 Use these commands from the project root:
 
 ```powershell
 # Create/switch to your branch
-git checkout -B ahmed
+git checkout -B ahmed-abdelsalam
 
 # Review what will be committed
 git status
@@ -386,7 +386,7 @@ git add .
 git commit -m "Project update: secure gitignore + README"
 
 # Push branch to GitHub
-git push -u origin ahmed
+git push -u origin ahmed-abdelsalam
 ```
 
 Before pushing, verify that `.env`, local DB files, and private keys are not listed by `git status`.
