@@ -22,7 +22,6 @@ def prefetch_models():
     print("✓ Embeddings model cached")
 
     # 2. Reranker / cross-encoder model (~1.1 GB)
-    #    Local reranker/ dir only has tokenizer files; download full weights now.
     from sentence_transformers import CrossEncoder
     print("⏳ Pre-downloading reranker model: BAAI/bge-reranker-v2-m3")
     CrossEncoder("BAAI/bge-reranker-v2-m3")
@@ -39,12 +38,14 @@ image = (
     .run_function(prefetch_models)            # cache ML weights at build time
     .add_local_dir("app",       remote_path="/root/app")
     .add_local_dir("data",      remote_path="/root/data")
-    .add_local_dir("chroma_db", remote_path="/root/chroma_db")   # pre-built vector DB
+    .add_local_dir("chroma_db", remote_path="/root/chroma_db")  # pre-built vector DB
 )
 
 # Only add reranker tokenizer files if dir exists (weights come from cache)
 if Path("reranker").exists():
     image = image.add_local_dir("reranker", remote_path="/root/reranker")
+
+# prefetch_models already ran above; no additional run_function needed
 
 app = modal.App(APP_NAME, image=image)
 
@@ -54,7 +55,7 @@ app = modal.App(APP_NAME, image=image)
 # ---------------------------------------------------------------------------
 @app.function(
     secrets=[modal.Secret.from_name("wakili-secrets")],
-    timeout=300,              # 5 min per request (more than enough now)
+    timeout=300,              # 5 min per request
     scaledown_window=1800,    # keep container alive 30 min after last request
 )
 @modal.concurrent(max_inputs=20)
@@ -65,6 +66,7 @@ def fastapi_app():
     sys.path.insert(0, "/root")
 
     # Point to bundled reranker tokenizer (model weights loaded from HF cache)
+    os.environ.setdefault("CHROMA_DIR", "/root/chroma_db")
     os.environ.setdefault("RERANKER_MODEL_PATH", "/root/reranker")
     os.environ.setdefault("CORS_ALLOWED_ORIGINS",
                           "https://www.wakili.me,https://wakili.me,http://localhost:3000")

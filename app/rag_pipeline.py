@@ -3,24 +3,27 @@
 # ============================================
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
-import re
+import shutil
 import threading
+import time
 import warnings
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
-from typing import Dict, List, Set
+from typing import Dict, List, Optional, Set
 
 import numpy as np
 from langchain_chroma import Chroma
 from langchain_core.callbacks import CallbackManagerForRetrieverRun
 from langchain_core.documents import Document
+from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.output_parsers import StrOutputParser
-from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.retrievers import BaseRetriever
-from langchain_core.runnables import RunnableParallel, RunnablePassthrough
+from langchain_core.runnables import RunnableLambda, RunnableParallel, RunnablePassthrough
 from langchain_groq import ChatGroq
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.cross_encoders import HuggingFaceCrossEncoder
@@ -44,10 +47,89 @@ _cross_encoder_cache = None
 _docs_cache = None
 _cache_lock = threading.RLock()
 
+# Reusable thread pool for parallel retrieval (avoids per-request overhead)
+_retrieval_pool = ThreadPoolExecutor(max_workers=3, thread_name_prefix="retrieval")
+
+# Max characters per document sent to LLM context (keeps prompt tight)
+_MAX_DOC_CHARS = 1200
+
+
+# ──────────────────────────────────────────────────────────────────
+# SYSTEM PROMPT  (decision-tree for 6 response cases)
+# ──────────────────────────────────────────────────────────────────
+
+SYSTEM_INSTRUCTIONS: str = """\
+<role>
+أنت "المساعد القانوني الذكي"، مستشار قانوني متخصص في القوانين المصرية التالية:
+• الدستور المصري
+• القانون المدني المصري
+• قانون العمل المصري
+• قانون الأحوال الشخصية المصري
+• قانون مكافحة جرائم تقنية المعلومات
+• قانون الإجراءات الجنائية المصري
+
+مهمتك: الإجابة بدقة استناداً إلى السياق التشريعي المرفق أدناه.
+</role>
+
+<chat_history_instruction>
+إذا وُجد سجل محادثة سابق، استخدمه لفهم أسئلة المتابعة والسياق.
+لكن دائماً أعطِ الأولوية للسياق التشريعي المسترجع عند الإجابة.
+لا تكرر إجابات سابقة بالكامل — أشر إليها باختصار إن لزم.
+</chat_history_instruction>
+
+<decision_logic>
+حلّل سؤال المستخدم ثم اتبع أول حالة ينطبق شرطها:
+
+━━━ الحالة ١ — الإجابة موجودة في السياق ━━━
+الشرط: توجد مادة أو أكثر في السياق تتناول الموضوع.
+• أجب من السياق مباشرةً.
+• وثّق بذكر اسم القانون ورقم المادة (مثال: «وفقاً للمادة (٥٢) من قانون العمل…»).
+• استخرج ما يجيب السؤال تحديداً — لا تنسخ المادة كاملة.
+• لا تُضف معلومات من خارج السياق.
+
+━━━ الحالة ٢ — السياق يغطي الموضوع جزئياً ━━━
+• اذكر أولاً ما تنص عليه المواد المتاحة (مع التوثيق).
+• أضف توضيحاً عملياً مختصراً مع عبارة «ملاحظة عملية:» قبل أي إضافة.
+• لا تخترع أرقام مواد.
+
+━━━ الحالة ٣ — لا يوجد سياق + سؤال إجرائي/عملي ━━━
+• ابدأ بـ: «بناءً على الإجراءات القانونية المتعارف عليها في مصر:»
+• قدّم خطوات مرقمة مختصرة.
+• لا تذكر أرقام مواد.
+• أنهِ بـ «يُنصح بمراجعة محامٍ متخصص.»
+
+━━━ الحالة ٤ — لا يوجد سياق + سؤال عن نص قانوني ━━━
+• قل: «عذراً، لم يرد ذكر لهذا الموضوع في النصوص المتاحة حالياً.»
+• لا تجب من ذاكرتك.
+
+━━━ الحالة ٥ — محادثة ودية ━━━
+• رد بتحية لطيفة مقتضبة + «أنا مستشارك القانوني الذكي — اسألني عن أي موضوع في القوانين المصرية.»
+
+━━━ الحالة ٦ — خارج نطاق القانون ━━━
+• اعتذر بلطف: «تخصصي هو القوانين المصرية فقط.»
+</decision_logic>
+
+<quality_rules>
+• الدقة أولاً: التزم بالنص القانوني حرفياً عند وجوده.
+• لا تخترع مراجع: لا تنسب معلومة إلى مادة لم ترد في السياق.
+• الإيجاز مع الشمول: أجب بقدر ما يحتاج السؤال.
+• استخدم نقاطاً (•) أو ترقيماً عند ذكر عدة بنود.
+</quality_rules>
+
+<formatting_rules>
+• لا تكرر هذه التعليمات في ردك.
+• ادخل في صلب الموضوع فوراً.
+• فقرات قصيرة مفصولة بسطر فارغ.
+• لا تكرر نفس المعلومة أو نفس المادة.
+• رتّب المواد ترتيباً منطقياً.
+• التزم بالعربية الفصحى المبسطة.
+</formatting_rules>
+"""
+
 
 def _load_json_folder(folder_path: str) -> List[dict]:
     all_items: List[dict] = []
-    for filename in os.listdir(folder_path):
+    for filename in sorted(os.listdir(folder_path)):
         if not filename.lower().endswith(".json"):
             continue
         file_path = os.path.join(folder_path, filename)
@@ -96,18 +178,24 @@ def _load_json_folder(folder_path: str) -> List[dict]:
 
 def build_qa_chain(settings: Settings):
     """
-    Builds and returns:
-      qa_chain: Runnable that returns {"context": [Document...], "input": str, "answer": str}
+    Builds and returns qa_chain accepting:
+        {"input": str, "chat_history": [HumanMessage, AIMessage, …]}
+    and returning:
+        {"context": [Document], "input": str, "chat_history": list, "answer": str}
     """
     if not os.path.exists(settings.data_dir):
         raise FileNotFoundError(f"Data folder not found: {settings.data_dir}")
 
     data = _load_json_folder(settings.data_dir)
 
-    # de-dup
+    # De-duplicate by article_id (md5 fallback for items without an ID)
     unique: Dict[str, dict] = {}
     for item in data:
-        key = str(item.get("article_id") or item.get("article_number") or hash(json.dumps(item, ensure_ascii=False)))
+        key = str(
+            item.get("article_id")
+            or item.get("article_number")
+            or hashlib.md5(json.dumps(item, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+        )
         unique[key] = item
     data = list(unique.values())
 
@@ -124,13 +212,15 @@ def build_qa_chain(settings: Settings):
         chapter_fasl = item.get("chapter (Fasl)", "")
         section = item.get("section", "")
 
-        page_content = f"""القانون: {law_name}
-رقم المادة: {article_number}
-الباب: {part_bab}
-الفصل: {chapter_fasl}
-القسم: {section}
-النص الأصلي: {original_text}
-الشرح المبسط: {simplified_summary}"""
+        page_content = (
+            f"القانون: {law_name}\n"
+            f"رقم المادة: {article_number}\n"
+            f"الباب: {part_bab}\n"
+            f"الفصل: {chapter_fasl}\n"
+            f"القسم: {section}\n"
+            f"النص الأصلي: {original_text}\n"
+            f"الشرح المبسط: {simplified_summary}"
+        )
 
         metadata = {
             "article_id": item.get("article_id") or str(article_number),
@@ -146,14 +236,20 @@ def build_qa_chain(settings: Settings):
     if not docs:
         raise RuntimeError("No valid documents found in data folder (missing required fields).")
 
+    logger.info("✅ %d legal articles loaded", len(docs))
+
     # Cache heavy resources globally
     global _embeddings_cache, _vectorstore_cache, _cross_encoder_cache, _docs_cache
     
     with _cache_lock:
         # Load embeddings (cached)
         if _embeddings_cache is None:
-            logger.info("Loading embeddings model (first time)...")
-            _embeddings_cache = HuggingFaceEmbeddings(model_name="Omartificial-Intelligence-Space/GATE-AraBert-v1")
+            logger.info("Loading embeddings model: %s", settings.embedding_model)
+            os.makedirs(settings.embedding_cache_dir, exist_ok=True)
+            _embeddings_cache = HuggingFaceEmbeddings(
+                model_name=settings.embedding_model,
+                cache_folder=settings.embedding_cache_dir,
+            )
         embeddings = _embeddings_cache
         
         # Cache docs for reuse
@@ -174,18 +270,20 @@ def build_qa_chain(settings: Settings):
                 )
                 stored_count = vectorstore._collection.count()
                 if stored_count == 0 or abs(stored_count - len(docs)) > 5:
-                    import shutil
-
+                    logger.warning("Count mismatch (%d vs %d). Rebuilding...", stored_count, len(docs))
                     shutil.rmtree(settings.chroma_dir, ignore_errors=True)
                     db_exists = False
+                else:
+                    logger.info("✅ Chroma DB loaded (%d vectors)", stored_count)
 
             if not db_exists:
-                logger.info("Creating vectorstore (first time)...")
+                logger.info("Building Chroma DB (first run for this model)...")
                 vectorstore = Chroma.from_documents(
                     docs,
                     embeddings,
                     persist_directory=settings.chroma_dir,
                 )
+                logger.info("✅ Chroma DB built (%d vectors)", len(docs))
             
             _vectorstore_cache = vectorstore
 
@@ -195,9 +293,10 @@ def build_qa_chain(settings: Settings):
     # BM25 retriever
     # -----------------------------
     class BM25Retriever(BaseRetriever):
+        """Arabic-aware BM25 retriever (Okapi variant)."""
         corpus_docs: List[Document]
-        bm25: BM25Okapi = None
-        tokenized_corpus: list = None
+        bm25: Optional[BM25Okapi] = None
+        tokenized_corpus: Optional[list] = None
         k: int = 10
 
         class Config:
@@ -220,14 +319,16 @@ def build_qa_chain(settings: Settings):
             return self._get_relevant_documents(query, run_manager=run_manager)
 
     bm25_retriever = BM25Retriever(corpus_docs=docs, k=settings.bm25_k)
+    logger.info("✅ BM25 retriever ready")
 
     # -----------------------------
     # Metadata filter retriever
     # -----------------------------
     class MetadataFilterRetriever(BaseRetriever):
+        """Scores docs by keyword/law-name overlap using a pre-built inverted index."""
         corpus_docs: List[Document]
-        keyword_index: Dict[str, Set[int]] = None
-        law_name_index: Dict[str, Set[int]] = None
+        keyword_index: Optional[Dict[str, Set[int]]] = None
+        law_name_index: Optional[Dict[str, Set[int]]] = None
         k: int = 10
 
         class Config:
@@ -258,12 +359,12 @@ def build_qa_chain(settings: Settings):
             if not query_tokens:
                 return []
 
-            scores = defaultdict(float)
+            scores: Dict[int, float] = defaultdict(float)
             for token in query_tokens:
                 for idx in self.keyword_index.get(token, set()):
-                    scores[idx] += 3.0
+                    scores[idx] += 3.0       # keyword match weight
                 for idx in self.law_name_index.get(token, set()):
-                    scores[idx] += 4.0
+                    scores[idx] += 4.0       # law-name match weight (strongest signal)
 
             if not scores:
                 return []
@@ -275,32 +376,37 @@ def build_qa_chain(settings: Settings):
             return self._get_relevant_documents(query, run_manager=run_manager)
 
     metadata_retriever = MetadataFilterRetriever(corpus_docs=docs, k=settings.meta_k)
+    logger.info("✅ Metadata retriever ready")
 
     # -----------------------------
     # Hybrid RRF retriever (parallel)
     # -----------------------------
     class HybridRRFRetriever(BaseRetriever):
+        """Reciprocal Rank Fusion: scores = Σ β / (k + rank) across 3 retrievers."""
         semantic_retriever: BaseRetriever
         bm25_retriever: BM25Retriever
         metadata_retriever: MetadataFilterRetriever
-        beta_semantic: float = 0.5
-        beta_keyword: float = 0.3
-        beta_metadata: float = 0.2
+        beta_semantic: float = 0.60
+        beta_keyword: float = 0.20
+        beta_metadata: float = 0.20
         k: int = 60
-        top_k: int = 12
+        top_k: int = 15
 
         class Config:
             arbitrary_types_allowed = True
 
         def _get_relevant_documents(self, query: str, *, run_manager: CallbackManagerForRetrieverRun = None) -> List[Document]:
-            with ThreadPoolExecutor(max_workers=3) as pool:
-                fut_sem = pool.submit(self.semantic_retriever.invoke, query)
-                fut_bm = pool.submit(self.bm25_retriever.invoke, query)
-                fut_meta = pool.submit(self.metadata_retriever.invoke, query)
+            t0 = time.perf_counter()
+            fut_sem = _retrieval_pool.submit(self.semantic_retriever.invoke, query)
+            fut_bm = _retrieval_pool.submit(self.bm25_retriever.invoke, query)
+            fut_meta = _retrieval_pool.submit(self.metadata_retriever.invoke, query)
 
-                semantic_docs = fut_sem.result()
-                bm25_docs = fut_bm.result()
-                metadata_docs = fut_meta.result()
+            semantic_docs = fut_sem.result(timeout=30)
+            bm25_docs = fut_bm.result(timeout=30)
+            metadata_docs = fut_meta.result(timeout=30)
+            logger.info("    [retrieval] semantic=%d bm25=%d meta=%d (%.2fs)",
+                        len(semantic_docs), len(bm25_docs), len(metadata_docs),
+                        time.perf_counter() - t0)
 
             rrf_scores: Dict[str, float] = {}
             all_docs: Dict[str, Document] = {}
@@ -325,23 +431,21 @@ def build_qa_chain(settings: Settings):
         semantic_retriever=base_retriever,
         bm25_retriever=bm25_retriever,
         metadata_retriever=metadata_retriever,
-        beta_semantic=0.5,
-        beta_keyword=0.3,
-        beta_metadata=0.2,
+        beta_semantic=settings.beta_semantic,
+        beta_keyword=settings.beta_bm25,
+        beta_metadata=settings.beta_metadata,
         k=settings.rrf_k,
         top_k=settings.hybrid_top_k,
     )
+    logger.info("✅ Hybrid RRF (β sem=%.2f bm25=%.2f meta=%.2f)", settings.beta_semantic, settings.beta_bm25, settings.beta_metadata)
 
     # -----------------------------
     # Reranker (CrossEncoder) - cached
     # -----------------------------
-    # Determine reranker model: use local path if it contains model weights,
-    # otherwise fall back to HuggingFace model ID (weights pre-cached at build time).
     _RERANKER_HF_ID = "BAAI/bge-reranker-v2-m3"
     reranker_path = settings.reranker_model_path
 
     if reranker_path and os.path.exists(reranker_path):
-        # Check if local dir actually has model weights (not just tokenizer files)
         has_weights = any(
             f.endswith((".bin", ".safetensors", ".pt"))
             for f in os.listdir(reranker_path)
@@ -355,18 +459,19 @@ def build_qa_chain(settings: Settings):
 
     with _cache_lock:
         if _cross_encoder_cache is None:
-            logger.info("Loading cross encoder reranker (first time)...")
+            logger.info("Loading cross encoder reranker...")
             _cross_encoder_cache = HuggingFaceCrossEncoder(model_name=reranker_path)
         cross_encoder = _cross_encoder_cache
-    
+
     compressor = CrossEncoderReranker(model=cross_encoder, top_n=settings.reranker_top_n)
-    compression_retriever = ContextualCompressionRetriever(
+    final_retriever = ContextualCompressionRetriever(
         base_compressor=compressor,
         base_retriever=hybrid_retriever,
     )
+    logger.info("✅ Reranker ready (top_n=%d)", settings.reranker_top_n)
 
     # -----------------------------
-    # LLM + prompt
+    # LLM (Groq)
     # -----------------------------
     if not settings.groq_api_key:
         raise RuntimeError("GROQ_API_KEY is missing in .env")
@@ -377,93 +482,68 @@ def build_qa_chain(settings: Settings):
         temperature=settings.temperature,
         max_tokens=settings.max_tokens,
         model_kwargs={"top_p": settings.top_p},
+        max_retries=settings.llm_max_retries,
+        request_timeout=settings.llm_timeout,
     )
 
-    system_instructions = """
-<role>
-أنت "المساعد القانوني الذكي"، مستشار قانوني متخصص في القوانين المصرية التالية:
-- الدستور المصري
-- القانون المدني المصري
-- قانون العمل المصري
-- قانون الأحوال الشخصية المصري
-- قانون مكافحة جرائم تقنية المعلومات
-- قانون الإجراءات الجنائية المصري
+    # -----------------------------
+    # Prompt (system + context + chat history + user)
+    # -----------------------------
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", SYSTEM_INSTRUCTIONS),
+        ("system", "السياق التشريعي المتاح (المصدر الأساسي):\n{context}"),
+        MessagesPlaceholder(variable_name="chat_history"),
+        ("human", "سؤال المستفيد:\n{input}"),
+    ])
 
-مهمتك الأساسية: الإجابة بدقة استناداً إلى "السياق التشريعي" المرفق أدناه.
-عند وجود نص قانوني في السياق، هو مصدرك الأول والأهم.
-</role>
+    # -----------------------------
+    # Chain (retrieve → format → generate) with timing
+    # -----------------------------
+    def _format_context(docs_list: List[Document]) -> str:
+        """Join doc texts with a separator for the LLM prompt, truncating overly long docs."""
+        parts = []
+        for d in docs_list:
+            text = d.page_content
+            if len(text) > _MAX_DOC_CHARS:
+                text = text[:_MAX_DOC_CHARS] + " …"
+            parts.append(text)
+        return "\n\n---\n\n".join(parts)
 
-<decision_logic>
-حلّل سؤال المستخدم ثم اتبع أول حالة ينطبق شرطها:
-
-━━━ الحالة ١ — الإجابة موجودة في السياق (الأولوية القصوى) ━━━
-الشرط: توجد مادة أو أكثر في السياق تتناول موضوع السؤال بشكل مباشر أو وثيق الصلة.
-الفعل:
-• أجب من السياق مباشرةً دون مقدمات.
-• وثّق كل معلومة بذكر اسم القانون ورقم المادة (مثال: «وفقاً للمادة (٥٢) من قانون العمل...»).
-• استخرج ما يجيب السؤال تحديداً — لا تنسخ المادة كاملة.
-• لا تضف معلومات من خارج السياق في هذه الحالة.
-
-━━━ الحالة ٢ — السياق يغطي الموضوع جزئياً ━━━
-الشرط: توجد مواد ذات صلة لكنها لا تجيب السؤال بالكامل.
-الفعل:
-• اذكر أولاً ما تنص عليه المواد المتاحة (مع التوثيق).
-• ثم أضف توضيحاً عملياً مختصراً يساعد المستخدم، مع التنبيه بعبارة:
-  «ملاحظة عملية:» أو «من الناحية التطبيقية:» قبل أي إضافة.
-• لا تخترع أرقام مواد أو تنسب نصوصاً لقوانين لم ترد في السياق.
-
-━━━ الحالة ٣ — السياق لا يحتوي الإجابة + السؤال إجرائي/عملي ━━━
-الشرط: لا توجد مادة في السياق تتعلق بالموضوع، لكن السؤال عن إجراءات عملية (بلاغ، محضر، حادث، طلاق، تعامل مع الشرطة...).
-الفعل:
-• ابدأ بعبارة: «بناءً على الإجراءات القانونية المتعارف عليها في مصر (وليس استناداً لنص قانوني محدد من قاعدة البيانات):»
-• قدم خطوات عملية مرقمة ومختصرة.
-• لا تذكر أرقام مواد — لا تختـرع مراجع.
-• أنهِ بـ«يُنصح بمراجعة محامٍ متخصص لتأكيد الإجراءات.»
-
-━━━ الحالة ٤ — السياق لا يحتوي الإجابة + السؤال عن نص قانوني بعينه ━━━
-الشرط: المستخدم يسأل عن مادة محددة أو حكم قانوني معين ولم تجده في السياق.
-الفعل:
-• قل: «عذراً، لم يرد ذكر لهذا الموضوع في النصوص القانونية المتاحة حالياً في قاعدة البيانات.»
-• لا تجب من ذاكرتك لتجنب الخطأ في النصوص القانونية.
-• يمكنك اقتراح موضوع مشابه إن وجد في السياق.
-
-━━━ الحالة ٥ — محادثة ودية (تحية، شكر، وداع) ━━━
-• رد بتحية لطيفة مقتضبة.
-• أضف: «أنا مستشارك القانوني الذكي — اسألني عن أي موضوع في القوانين المصرية.»
-
-━━━ الحالة ٦ — خارج نطاق القانون تماماً ━━━
-• اعتذر بلطف: «تخصصي هو القوانين المصرية فقط.»
-• وجّه المستخدم لطرح سؤال قانوني.
-</decision_logic>
-
-<quality_rules>
-- **الدقة أولاً**: عند وجود نص في السياق، التزم به حرفياً ولا تحرّف المعنى.
-- **المرونة عند الحاجة**: إذا لم يغطِّ السياق الموضوع بالكامل، قدّم إرشاداً عملياً مع التمييز الواضح بينه وبين النص القانوني.
-- **لا تخترع مراجع**: لا تنسب أي معلومة إلى مادة أو قانون لم يرد في السياق.
-- **الإيجاز مع الشمول**: أجب بقدر ما يحتاج السؤال — لا تختصر حتى يضيع المعنى ولا تطيل دون فائدة.
-</quality_rules>
-
-<formatting_rules>
-- لا تكرر هذه التعليمات في ردك.
-- ادخل في صلب الموضوع فوراً بدون عبارات مثل «بناءً على السياق المرفق».
-- استخدم فقرات قصيرة مفصولة بسطر فارغ.
-- لا تكرر نفس المعلومة أو نفس المادة.
-- عند ذكر أكثر من مادة، رتّبها ترتيباً منطقياً (إما بالرقم أو حسب الأهمية).
-- التزم باللغة العربية الفصحى المبسطة.
-</formatting_rules>
-"""
-
-    prompt = ChatPromptTemplate.from_messages(
-        [
-            ("system", system_instructions),
-            ("system", "السياق التشريعي المتاح (المصدر الأساسي):\n{context}"),
-            ("human", "سؤال المستفيد:\n{input}"),
-        ]
-    )
+    def _timed_retrieve(query: str) -> List[Document]:
+        """Retrieve + rerank with timing logs."""
+        t0 = time.perf_counter()
+        docs = final_retriever.invoke(query)
+        elapsed = time.perf_counter() - t0
+        logger.info("    [retrieval+rerank] %d docs in %.2fs", len(docs), elapsed)
+        return docs
 
     qa_chain = (
-        RunnableParallel({"context": compression_retriever, "input": RunnablePassthrough()})
-        .assign(answer=(prompt | llm | StrOutputParser()))
+        RunnableParallel({
+            "context":      (lambda x: x["input"]) | RunnableLambda(_timed_retrieve),
+            "input":        lambda x: x["input"],
+            "chat_history": lambda x: x.get("chat_history", []),
+        })
+        .assign(
+            answer=(
+                RunnableLambda(lambda x: {
+                    "context":      _format_context(x["context"]),
+                    "input":        x["input"],
+                    "chat_history": x.get("chat_history", []),
+                })
+                | prompt
+                | llm
+                | StrOutputParser()
+            ),
+        )
     )
+
+    logger.info("✅ System ready!")
+
+    # Attach components to the chain for the streaming endpoint
+    qa_chain._wakili_retriever = final_retriever
+    qa_chain._wakili_llm = llm
+    qa_chain._wakili_prompt = prompt
+    qa_chain._wakili_format_context = _format_context
+
     return qa_chain
 

@@ -1,22 +1,21 @@
-# Python
+# ===== Python =====
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
 
-# Virtual Environment
+# ===== Virtual Environment =====
+.venv/
 venv/
 env/
 ENV/
 
-# Environment variables
+# ===== Environment / Secrets =====
 .env
 .env.local
 .env.*
 !.env.example
-
-# Secrets / credentials
 *.pem
 *.key
 *.crt
@@ -25,49 +24,41 @@ ENV/
 secrets.*
 credentials.*
 
-# Reranker model files
-reranker/
-
-# Vector database
+# ===== Heavy ML artifacts (downloaded at runtime / build) =====
+embedding_cache/
 chroma_db/
+chroma_db_*/
 
-# Data files - CSV
-*.csv
+# ===== Archive (old/unused files kept for reference) =====
+archive/
 
-# Data files - JSON (exclude all except specific test file)
-*.json
-!test_dataset_5_questions.json
-
-# Markdown files (exclude all except README)
-*.md
-!README.md
-
-# Wheel files
-*.whl
-
-# IDE
+# ===== Build / IDE =====
 .vscode/
 .idea/
 *.swp
 *.swo
+dist/
+build/
+*.egg-info/
 
-# OS
+# ===== OS =====
 .DS_Store
 Thumbs.db
 
-# Logs
+# ===== Logs / runtime state =====
 *.log
 logs/
-
-# Local databases / runtime state
 *.sqlite
 *.sqlite3
 *.db
 
-# Python tooling cache
+# ===== Python tooling =====
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
 
-# Jupyter Notebooks checkpoints
+# ===== Jupyter =====
 .ipynb_checkpoints/
+
+# ===== Wheel files =====
+*.whl

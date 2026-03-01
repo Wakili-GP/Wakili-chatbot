@@ -4,6 +4,17 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
 
+class SessionRequest(BaseModel):
+    """Frontend requests a new session — optionally supplies a user_id."""
+    user_id: Optional[str] = Field(default=None, description="Optional user identifier; one will be generated if absent")
+
+
+class SessionResponse(BaseModel):
+    """Returned to the frontend so it can attach session_id to every subsequent request."""
+    session_id: str
+    user_id: str
+
+
 class AskRequest(BaseModel):
     query: str = Field(..., min_length=1, description="User question in Arabic")
     user_id: str = Field(..., min_length=1, description="User identifier")
